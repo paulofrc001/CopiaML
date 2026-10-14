@@ -50,8 +50,8 @@ export const Importar: React.FC<ImportarProps> = ({ onSuccess, onNavigateToAnunc
 
   // Exemplos rápidos para facilitar testes imediatos pelo usuário
   const sampleItems = [
+    { label: 'Exemplo Camiseta (MLBU)', id: 'https://www.mercadolivre.com.br/camiseta-masculina-basica-gola-redonda-algodao-varias-cores/up/MLBU4817623897' },
     { label: 'Exemplo MLB Tênis', id: 'MLB3564789123' },
-    { label: 'Exemplo URL Produto', id: 'https://produto.mercadolivre.com.br/MLB-3564789123-tenis-corrida-masculino-esportivo' },
     { label: 'Exemplo Fone Bluetooth', id: 'MLB2876543210' },
   ];
 
@@ -206,13 +206,13 @@ export const Importar: React.FC<ImportarProps> = ({ onSuccess, onNavigateToAnunc
                   type="text"
                   value={inputUrl}
                   onChange={(e) => setInputUrl(e.target.value)}
-                  placeholder="https://produto.mercadolivre.com.br/MLB-1234567890 ou MLB1234567890"
+                  placeholder="https://www.mercadolivre.com.br/.../up/MLBU4817623897 ou MLB1234567890"
                   className="w-full px-4 py-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-slate-100 text-sm font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all shadow-inner"
                   disabled={loading}
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
-                <span>O sistema identifica automaticamente o código MLB em URLs completas ou IDs diretos.</span>
+                <span>Identifica automaticamente links no formato /up/MLBU..., /p/MLB..., URLs diretas e códigos MLB.</span>
               </p>
             </div>
 

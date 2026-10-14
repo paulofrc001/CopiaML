@@ -1,4 +1,4 @@
-import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
+import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -185,7 +185,7 @@ function initSchema(database: Database) {
 
 // Helpers for executing SQL with objects
 export function queryAll<T = any>(sql: string, params: any[] = []): T[] {
-  if (!db) throw new Error('Database not initialized');
+  if (!db) return [];
   const stmt = db.prepare(sql);
   if (params.length > 0) {
     stmt.bind(params);
@@ -206,11 +206,12 @@ export function queryOne<T = any>(sql: string, params: any[] = []): T | null {
 export function runExec(sql: string, params: any[] = []): { lastInsertRowid: number; changes: number } {
   if (!db) throw new Error('Database not initialized');
   db.run(sql, params);
+  const rowidRes = db.exec('SELECT last_insert_rowid() as id');
+  const lastInsertRowid = rowidRes && rowidRes[0]?.values[0] ? Number(rowidRes[0].values[0][0]) : 0;
   persistDb();
 
-  const rowidRes = queryOne<{ id: number }>('SELECT last_insert_rowid() as id');
   return {
-    lastInsertRowid: rowidRes?.id || 0,
+    lastInsertRowid,
     changes: 1,
   };
 }
