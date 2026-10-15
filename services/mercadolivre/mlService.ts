@@ -261,6 +261,65 @@ async function fetchDescription(mlbId: string): Promise<string> {
 }
 
 /**
+ * Extrai todas as URLs de imagens do Mercado Livre a partir de qualquer texto, links ou HTML
+ */
+export function extractMlImagesFromText(text: string): string[] {
+  if (!text || typeof text !== 'string') return [];
+  const results: string[] = [];
+  const seenIds = new Set<string>();
+
+  // Captura URLs de imagens do CDN do Mercado Livre (http2.mlstatic.com)
+  const mlRegex = /https?:\/\/(?:http2\.)?mlstatic\.com\/D_NQ_NP_[^\s"'<>\\\)]+/gi;
+  const matches = text.match(mlRegex) || [];
+
+  for (const rawUrl of matches) {
+    let clean = rawUrl.replace(/[,\;\"\'\)\>]+$/, '').trim();
+    // Extrai o identificador base para evitar fotos duplicadas em resoluções diferentes
+    const baseIdMatch = clean.match(/D_NQ_NP_(?:2X_)?([0-9A-Za-z_-]+?)(?:-[A-Z]|-O|-F|\.[a-z]+|$)/i);
+    const baseId = baseIdMatch ? baseIdMatch[1] : clean;
+
+    if (!seenIds.has(baseId)) {
+      seenIds.add(baseId);
+      results.push(clean);
+    }
+  }
+
+  // Se não houver fotos do mlstatic, captura URLs genéricas de imagem (jpg, webp, png)
+  if (results.length === 0) {
+    const genericImgRegex = /https?:\/\/[^\s"'<>\\\)]+\.(?:webp|jpg|jpeg|png)(?:\?[^\s"'<>\\\)]*)?/gi;
+    const genericMatches = text.match(genericImgRegex) || [];
+    for (const gUrl of genericMatches) {
+      const clean = gUrl.replace(/[,\;\"\'\)\>]+$/, '').trim();
+      if (!results.includes(clean)) {
+        results.push(clean);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Tenta extrair o título a partir do slug presente na URL da imagem do Mercado Livre
+ * Exemplo: 736388-MLB...-F-kit-5-camisetas-basica-algodo-lisas-gola-redonda-regular.webp
+ */
+export function extractTitleFromImageUrl(imageUrl: string): string | null {
+  if (!imageUrl) return null;
+  const slugMatch = imageUrl.match(/-[A-Z]-([a-z0-9-]+)\.(?:webp|jpg|jpeg|png)/i);
+  if (slugMatch && slugMatch[1] && slugMatch[1].length > 5) {
+    return slugMatch[1]
+      .split('-')
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ')
+      .replace(/\bAlgodo\b/gi, 'Algodão')
+      .replace(/\bBasica\b/gi, 'Básica')
+      .replace(/\bTenis\b/gi, 'Tênis');
+  }
+  return null;
+}
+
+/**
  * Tenta buscar imagens reais da página do anúncio do Mercado Livre via scraping do HTML
  */
 async function tryScrapeMercadoLivreImages(input: string, numericId: string): Promise<string[]> {
@@ -289,28 +348,10 @@ async function tryScrapeMercadoLivreImages(input: string, numericId: string): Pr
       const html = await res.text();
       if (html.includes('suspicious-traffic-frontend')) continue;
 
-      const found: string[] = [];
-
-      // Extrai imagens do mlstatic
-      const regex = /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_([0-9A-Za-z_-]+)\.(?:webp|jpg|jpeg|png)/gi;
-      let m: RegExpExecArray | null;
-      while ((m = regex.exec(html)) !== null) {
-        let full = m[0];
-        // Converte para alta resolução -O.webp se possível
-        const highRes = full.replace(/-[VDI]\.(webp|jpg|jpeg|png)$/i, '-O.webp');
-        found.push(highRes);
-      }
-
-      // Meta tag og:image
-      const ogMatch = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
-      if (ogMatch && ogMatch[1]) {
-        found.unshift(ogMatch[1]);
-      }
-
-      const unique = Array.from(new Set(found));
-      if (unique.length > 0) {
-        logAction('info', 'SCRAPING_IMAGENS', `Recuperadas ${unique.length} fotos reais do Mercado Livre para ID ${numericId}`);
-        return unique;
+      const found = extractMlImagesFromText(html);
+      if (found.length > 0) {
+        logAction('info', 'SCRAPING_IMAGENS', `Recuperadas ${found.length} fotos reais do Mercado Livre para ID ${numericId}`);
+        return found;
       }
     } catch (e) {
       // Ignora falhas pontuais de scraping
@@ -391,9 +432,26 @@ async function createFallbackListingFromUrl(
   mlbId: string,
   rawPrefix: string,
   numericId: string,
-  downloadImages = true
+  downloadImages = true,
+  providedImages?: string[]
 ): Promise<MLItemData> {
-  const extractedTitle = extractTitleFromUrl(input) || `Produto Mercado Livre ${rawPrefix}`;
+  let extractedTitle = extractTitleFromUrl(input);
+
+  // Se não extraiu título da URL mas há fotos fornecidas com slug na URL, extrai o título da imagem
+  if (!extractedTitle && providedImages && providedImages.length > 0) {
+    for (const img of providedImages) {
+      const fromImg = extractTitleFromImageUrl(img);
+      if (fromImg) {
+        extractedTitle = fromImg;
+        break;
+      }
+    }
+  }
+
+  if (!extractedTitle) {
+    extractedTitle = `Produto Mercado Livre ${rawPrefix}`;
+  }
+
   const now = new Date().toISOString();
 
   const lower = extractedTitle.toLowerCase();
@@ -402,10 +460,24 @@ async function createFallbackListingFromUrl(
   let galleryUrls: string[] = [];
   let variacoes: MLItemData['variacoes'] = [];
 
-  // Tenta extrair imagens reais do Mercado Livre
-  const realScrapedImages = await tryScrapeMercadoLivreImages(input, numericId);
-  if (realScrapedImages.length > 0) {
-    galleryUrls = realScrapedImages;
+  // 1. Usa imagens fornecidas explicitamente se existirem
+  if (providedImages && providedImages.length > 0) {
+    galleryUrls = [...providedImages];
+  } else {
+    // 2. Tenta extrair imagens reais do Mercado Livre via scraping do HTML
+    const realScrapedImages = await tryScrapeMercadoLivreImages(input, numericId);
+    if (realScrapedImages.length > 0) {
+      galleryUrls = realScrapedImages;
+      if (!extractTitleFromUrl(input)) {
+        for (const img of realScrapedImages) {
+          const fromImg = extractTitleFromImageUrl(img);
+          if (fromImg) {
+            extractedTitle = fromImg;
+            break;
+          }
+        }
+      }
+    }
   }
 
   if (lower.includes('dry fit') || lower.includes('dryfit') || lower.includes('treino') || lower.includes('academia') || lower.includes('esporte')) {
@@ -630,7 +702,11 @@ Caso queira sincronizar diretamente via API oficial, informe o ACCESS_TOKEN em C
  * - Direciona as requisições para o endpoint padrão de itens do Mercado Livre (/items/MLB{numericId})
  * - Baixa todas as imagens disponíveis (anúncio e variações) para a pasta local
  */
-export async function importFromMercadoLivre(input: string, downloadImages = true): Promise<MLItemData> {
+export async function importFromMercadoLivre(
+  input: string,
+  downloadImages = true,
+  providedImages?: string[]
+): Promise<MLItemData> {
   const numericId = extractRawNumericId(input);
   if (!numericId) {
     throw new Error(`ID ou URL do anúncio inválido. Insira um formato aceito como "MLB1234567890", "MLBU5175805120" ou URL oficial.`);
@@ -654,7 +730,7 @@ export async function importFromMercadoLivre(input: string, downloadImages = tru
     logAction('info', 'IMPORTAR_API_HIT', `Anúncio recuperado com sucesso pelo endpoint padrão ${standardItemEndpoint}`);
   } catch (apiErr: any) {
     logAction('warn', 'IMPORTAR_FALLBACK', `Endpoint padrão ${standardItemEndpoint} retornou (${apiErr.message}). Utilizando metadados da URL para ${rawPrefix}`);
-    return await createFallbackListingFromUrl(input, mlbId, rawPrefix, numericId, downloadImages);
+    return await createFallbackListingFromUrl(input, mlbId, rawPrefix, numericId, downloadImages, providedImages);
   }
 
   // 2. Busca descrição e categoria no endpoint padrão de itens

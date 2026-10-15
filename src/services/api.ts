@@ -21,11 +21,16 @@ export async function checkMlbExists(input: string) {
   return res.json();
 }
 
-export async function importListing(input: string, downloadImages = true, action: 'create' | 'update' = 'create') {
+export async function importListing(
+  input: string,
+  downloadImages = true,
+  action: 'create' | 'update' = 'create',
+  imageUrls?: string
+) {
   const res = await fetch(`${API_BASE}/anuncios/importar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input, downloadImages, action }),
+    body: JSON.stringify({ input, downloadImages, action, imageUrls }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -208,14 +213,29 @@ export async function downloadAllAnuncioImages(
   return data;
 }
 
-export async function addAnuncioImage(id: number, url: string): Promise<{ success: boolean; imagens: any[] }> {
+export async function addAnuncioImage(
+  id: number,
+  payload: string | { url?: string; urls?: string[]; text?: string; rawHtml?: string; replaceAll?: boolean }
+): Promise<{ success: boolean; count?: number; message?: string; imagens: any[]; titulo?: string }> {
+  const body = typeof payload === 'string' ? { url: payload } : payload;
   const res = await fetch(`${API_BASE}/anuncios/${id}/imagens`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Falha ao adicionar imagem');
+  return data;
+}
+
+export async function setAnuncioCoverImage(id: number, imageId: number): Promise<{ success: boolean; imagens: any[] }> {
+  const res = await fetch(`${API_BASE}/anuncios/${id}/imagens/definir-capa`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Falha ao definir imagem de capa');
   return data;
 }
 

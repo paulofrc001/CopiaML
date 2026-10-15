@@ -7,9 +7,11 @@ import {
   AlertTriangle,
   RefreshCw,
   FolderDown,
-  Sparkles,
   ArrowRight,
   ExternalLink,
+  Image as ImageIcon,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { checkMlbExists, importListing, importBatch } from '../services/api.ts';
 import { useToast } from '../context/ToastContext.tsx';
@@ -24,7 +26,16 @@ export const Importar: React.FC<ImportarProps> = ({ onSuccess, onNavigateToAnunc
   const [mode, setMode] = useState<'individual' | 'lote'>('individual');
   const [inputUrl, setInputUrl] = useState('');
   const [downloadImages, setDownloadImages] = useState(true);
+  const [customImagesText, setCustomImagesText] = useState('');
+  const [showCustomImages, setShowCustomImages] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Conta fotos do Mercado Livre detectadas no texto de imagens
+  const detectedImagesCount = React.useMemo(() => {
+    if (!customImagesText.trim()) return 0;
+    const matches = customImagesText.match(/https?:\/\/(?:http2\.)?mlstatic\.com\/D_NQ_NP_[^\s"'<>\\\)]+/gi) || [];
+    return new Set(matches.map(m => m.split('?')[0])).size;
+  }, [customImagesText]);
 
   // Duplicidade modal
   const [duplicateModal, setDuplicateModal] = useState<{
@@ -81,9 +92,10 @@ export const Importar: React.FC<ImportarProps> = ({ onSuccess, onNavigateToAnunc
       }
 
       // 2. Não existe, prossegue com a importação
-      const res = await importListing(trimmed, downloadImages, 'create');
+      const res = await importListing(trimmed, downloadImages, 'create', customImagesText.trim() || undefined);
       addToast('sucesso', 'Anúncio importado com sucesso!', `Anúncio ${res.id} salvo no SQLite.`);
       setInputUrl('');
+      setCustomImagesText('');
       onSuccess(res.id);
     } catch (err: any) {
       addToast('erro', 'Falha na importação', err.message);
@@ -253,6 +265,63 @@ export const Importar: React.FC<ImportarProps> = ({ onSuccess, onNavigateToAnunc
                 />
                 <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
               </label>
+            </div>
+
+            {/* Custom ML Images Input (Accordion) */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 overflow-hidden transition-all">
+              <button
+                type="button"
+                onClick={() => setShowCustomImages(!showCustomImages)}
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-100/60 dark:hover:bg-slate-800/80 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <ImageIcon className="w-5 h-5 text-amber-500 shrink-0" />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Fotos Reais do Anúncio (Opcional)
+                      </p>
+                      {detectedImagesCount > 0 && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
+                          {detectedImagesCount} foto(s) ML detectada(s)
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Cole links diretos do mlstatic.com ou código da página para garantir as imagens reais em alta resolução (.webp)
+                    </p>
+                  </div>
+                </div>
+                {showCustomImages ? (
+                  <ChevronUp className="w-4 h-4 text-slate-400 shrink-0 ml-2" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-400 shrink-0 ml-2" />
+                )}
+              </button>
+
+              {showCustomImages && (
+                <div className="p-4 pt-1 border-t border-slate-200/80 dark:border-slate-700/60 space-y-3">
+                  <textarea
+                    rows={4}
+                    value={customImagesText}
+                    onChange={(e) => setCustomImagesText(e.target.value)}
+                    placeholder={`Cole aqui as URLs das imagens ou o código HTML da página do Mercado Livre.\nExemplo:\nhttps://http2.mlstatic.com/D_NQ_NP_2X_736388-MLB116999192340_102026-F-kit-5-camisetas-basica-algodo-lisas-gola-redonda-regular.webp`}
+                    className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-xs placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span>Dica: No Mercado Livre, clique com o botão direito na foto e selecione <strong>Copiar endereço da imagem</strong>.</span>
+                    {customImagesText.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setCustomImagesText('')}
+                        className="text-rose-500 hover:underline font-semibold"
+                      >
+                        Limpar fotos
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Submit Button */}

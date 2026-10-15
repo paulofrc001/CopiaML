@@ -162,7 +162,15 @@ export async function createAnuncioZip(anuncioId: number): Promise<Buffer> {
       }
 
       if (imgBuffer) {
-        const fileName = `${String(i + 1).padStart(2, '0')}_${img.ml_image_id || i}.jpg`;
+        let ext = 'jpg';
+        if (img.local_path) {
+          const match = img.local_path.match(/\.([a-zA-Z0-9]+)$/);
+          if (match) ext = match[1].toLowerCase();
+        } else if (img.url) {
+          const match = img.url.split('?')[0].match(/\.([a-zA-Z0-9]+)$/);
+          if (match) ext = match[1].toLowerCase();
+        }
+        const fileName = `${String(i + 1).padStart(2, '0')}_${img.ml_image_id || i}.${ext}`;
         imgFolder.file(fileName, imgBuffer);
       }
     }
@@ -202,7 +210,10 @@ export async function createBatchZip(anuncioIds: number[]): Promise<Buffer> {
           if (img.local_path) {
             const p = path.resolve(process.cwd(), img.local_path.replace(/^\//, ''));
             if (fs.existsSync(p)) {
-              imgSubFolder.file(`${String(i + 1).padStart(2, '0')}_${img.ml_image_id}.jpg`, fs.readFileSync(p));
+              let ext = 'jpg';
+              const match = p.match(/\.([a-zA-Z0-9]+)$/);
+              if (match) ext = match[1].toLowerCase();
+              imgSubFolder.file(`${String(i + 1).padStart(2, '0')}_${img.ml_image_id}.${ext}`, fs.readFileSync(p));
             }
           }
         }

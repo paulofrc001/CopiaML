@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { getDb, createBackup, restoreBackup, listBackups, getConfig, setConfig, logAction, queryAll, runExec, persistDb } from './database/db.ts';
-import { extractMlbId, importFromMercadoLivre, downloadImageToDisk } from './services/mercadolivre/mlService.ts';
+import { extractMlbId, importFromMercadoLivre, downloadImageToDisk, extractMlImagesFromText, extractTitleFromImageUrl } from './services/mercadolivre/mlService.ts';
 import { seedInitialDataIfEmpty } from './database/seed.ts';
 import {
   saveNewAnuncio,
@@ -48,11 +48,20 @@ app.use('/dados', express.static(dadosPath));
 // 1. Importar anúncio individual
 app.post('/api/anuncios/importar', async (req: Request, res: Response) => {
   try {
-    const { input, downloadImages = true, action = 'create' } = req.body;
+    const { input, downloadImages = true, action = 'create', images, imageUrls, rawHtml, fotos } = req.body;
     if (!input || typeof input !== 'string') {
       res.status(400).json({ error: 'URL ou ID do anúncio é obrigatório.' });
       return;
     }
+
+    // Extrai URLs de imagens se foram fornecidas pelo usuário
+    const textToScan = [
+      Array.isArray(images) ? images.join('\n') : images,
+      imageUrls,
+      rawHtml,
+      fotos,
+    ].filter(Boolean).join('\n');
+    const providedImages = textToScan.trim() ? extractMlImagesFromText(textToScan) : undefined;
 
     const mlbId = extractMlbId(input);
     if (!mlbId) {
@@ -74,8 +83,8 @@ app.post('/api/anuncios/importar', async (req: Request, res: Response) => {
       return;
     }
 
-    // Importar da API oficial do ML
-    const mlData = await importFromMercadoLivre(input, downloadImages);
+    // Importar da API oficial do ML (ou fallback enriquecido com fotos reais)
+    const mlData = await importFromMercadoLivre(input, downloadImages, providedImages);
 
     let id: number;
     if (existing && action === 'update') {
@@ -447,7 +456,7 @@ app.post('/api/anuncios/:id/baixar-imagens', async (req: Request, res: Response)
   }
 });
 
-// 10.3 Adicionar nova imagem e baixar automaticamente
+// 10.3 Adicionar nova(s) imagem(ns) e baixar automaticamente em lote
 app.post('/api/anuncios/:id/imagens', async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
@@ -457,22 +466,111 @@ app.post('/api/anuncios/:id/imagens', async (req: Request, res: Response) => {
       return;
     }
 
-    const { url } = req.body;
-    if (!url || typeof url !== 'string') {
-      res.status(400).json({ error: 'URL da imagem é obrigatória' });
+    const { url, urls, text, rawHtml, replaceAll = false } = req.body;
+    const combinedText = [
+      url,
+      Array.isArray(urls) ? urls.join('\n') : urls,
+      text,
+      rawHtml,
+    ].filter(Boolean).join('\n');
+
+    const extracted = extractMlImagesFromText(combinedText);
+    if (extracted.length === 0) {
+      res.status(400).json({ error: 'Nenhuma URL de imagem válida encontrada. Cole links do mlstatic.com ou código da página.' });
+      return;
+    }
+
+    if (replaceAll) {
+      runExec('DELETE FROM imagens WHERE anuncio_id = ?', [id]);
+    }
+
+    const currentImages = replaceAll ? [] : (anuncio.imagens || []);
+    let baseOrdem = currentImages.length;
+    let derivedTitle: string | null = null;
+    const addedImages: any[] = [];
+
+    for (let i = 0; i < extracted.length; i++) {
+      const imgUrl = extracted[i];
+      const ordem = baseOrdem + i;
+
+      // Extrai ID original do Mercado Livre (ex: 736388-MLB116999192340_102026)
+      const baseIdMatch = imgUrl.match(/D_NQ_NP_(?:2X_)?([0-9A-Za-z_-]+?)(?:-[A-Z]|-O|-F|\.[a-z]+|$)/i);
+      const imgId = baseIdMatch ? baseIdMatch[1] : `${anuncio.mlb_id}_img_${Date.now()}_${i}`;
+
+      const localPath = await downloadImageToDisk(anuncio.mlb_id, imgUrl, ordem, imgId);
+
+      runExec(
+        `INSERT INTO imagens (anuncio_id, ml_image_id, url, url_original, ordem, local_path)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [id, imgId, imgUrl, imgUrl, ordem, localPath || null]
+      );
+
+      addedImages.push({
+        ml_image_id: imgId,
+        url: imgUrl,
+        local_path: localPath,
+        ordem,
+      });
+
+      if (!derivedTitle) {
+        const fromImg = extractTitleFromImageUrl(imgUrl);
+        if (fromImg) derivedTitle = fromImg;
+      }
+    }
+
+    // Se o anúncio possuía título genérico e a imagem do ML contém o slug original do produto, atualiza
+    if (derivedTitle && (anuncio.titulo.startsWith('Produto Mercado Livre') || anuncio.titulo.startsWith('Sem título') || !anuncio.titulo)) {
+      runExec('UPDATE anuncios SET titulo = ? WHERE id = ?', [derivedTitle, id]);
+      logAction('info', 'TITULO_ATUALIZADO', `Título do anúncio #${id} atualizado para "${derivedTitle}" a partir do slug da imagem`);
+    }
+
+    persistDb();
+    logAction('info', 'IMAGENS_ADICIONADAS', `${extracted.length} foto(s) do Mercado Livre adicionada(s) e baixada(s) para o anúncio #${id} (${anuncio.mlb_id})`);
+
+    const updated = await findById(id);
+    res.json({
+      success: true,
+      count: extracted.length,
+      message: `${extracted.length} imagem(ns) adicionada(s) e salva(s) com sucesso!`,
+      imagens: updated?.imagens || [],
+      titulo: updated?.titulo || anuncio.titulo,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 10.3.1 Definir foto como Capa principal
+app.post('/api/anuncios/:id/imagens/definir-capa', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { imageId } = req.body;
+    if (!imageId) {
+      res.status(400).json({ error: 'ID da imagem é obrigatório' });
+      return;
+    }
+
+    const anuncio = await findById(id);
+    if (!anuncio) {
+      res.status(404).json({ error: 'Anúncio não encontrado' });
       return;
     }
 
     const imagens = anuncio.imagens || [];
-    const ordem = imagens.length;
-    const imgId = `${anuncio.mlb_id}_extra_${Date.now()}`;
-    const localPath = await downloadImageToDisk(anuncio.mlb_id, url.trim(), ordem, imgId);
+    const target = imagens.find(img => img.id === Number(imageId));
+    if (!target) {
+      res.status(404).json({ error: 'Imagem não encontrada no anúncio' });
+      return;
+    }
 
-    runExec(
-      `INSERT INTO imagens (anuncio_id, ml_image_id, url, url_original, ordem, local_path)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, imgId, url.trim(), url.trim(), ordem, localPath || null]
-    );
+    // Define a imagem selecionada como ordem 0, e as demais sequenciais
+    runExec('UPDATE imagens SET ordem = 0 WHERE id = ? AND anuncio_id = ?', [Number(imageId), id]);
+    let nextOrdem = 1;
+    for (const img of imagens) {
+      if (img.id !== Number(imageId)) {
+        runExec('UPDATE imagens SET ordem = ? WHERE id = ? AND anuncio_id = ?', [nextOrdem++, img.id, id]);
+      }
+    }
 
     persistDb();
     const updated = await findById(id);
