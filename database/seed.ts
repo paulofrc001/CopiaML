@@ -237,9 +237,20 @@ CONTEÚDO DA EMBALAGEM:
     ],
   };
 
+  // Download imagens para o disco local nos anúncios demonstrativos
+  const { downloadImageToDisk } = await import('../services/mercadolivre/mlService.ts');
+  for (let i = 0; i < item1.imagens.length; i++) {
+    const lp = await downloadImageToDisk(item1.mlb_id, item1.imagens[i].url, i, item1.imagens[i].ml_image_id);
+    if (lp) item1.imagens[i].local_path = lp;
+  }
+  for (let i = 0; i < item2.imagens.length; i++) {
+    const lp = await downloadImageToDisk(item2.mlb_id, item2.imagens[i].url, i, item2.imagens[i].ml_image_id);
+    if (lp) item2.imagens[i].local_path = lp;
+  }
+
   await saveNewAnuncio(item1);
   await saveNewAnuncio(item2);
 
-  logAction('info', 'SEED_INICIAL', 'Banco SQLite populado com anúncios demonstrativos');
+  logAction('info', 'SEED_INICIAL', 'Banco SQLite populado com anúncios demonstrativos e imagens baixadas no disco');
   console.log('Seed inicial concluído com sucesso!');
 }

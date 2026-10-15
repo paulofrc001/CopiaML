@@ -223,3 +223,63 @@ export async function createBatchZip(anuncioIds: number[]): Promise<Buffer> {
 
   return await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
+
+/**
+ * Cria pacote ZIP contendo exclusivamente as fotos/imagens do anúncio em alta resolução
+ */
+export async function createAnuncioImagensZip(anuncioId: number): Promise<Buffer> {
+  const anuncio = await findById(anuncioId);
+  if (!anuncio) throw new Error(`Anúncio ${anuncioId} não encontrado.`);
+
+  const zip = new JSZip();
+  const imagens = anuncio.imagens || [];
+
+  for (let i = 0; i < imagens.length; i++) {
+    const img = imagens[i];
+    let imgBuffer: Buffer | null = null;
+    let ext = 'jpg';
+
+    // 1. Tenta carregar do disco local
+    if (img.local_path) {
+      const fullPath = path.resolve(process.cwd(), img.local_path.replace(/^\//, ''));
+      if (fs.existsSync(fullPath)) {
+        imgBuffer = fs.readFileSync(fullPath);
+        const match = fullPath.match(/\.([a-zA-Z0-9]+)$/);
+        if (match) ext = match[1].toLowerCase();
+      }
+    }
+
+    // 2. Se não estiver no disco, faz download direto da URL
+    if (!imgBuffer && (img.url || img.url_original)) {
+      try {
+        const targetUrl = img.url || img.url_original;
+        const res = await fetch(targetUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': 'https://www.mercadolivre.com.br/',
+          },
+        });
+        if (res.ok) {
+          const arrBuf = await res.arrayBuffer();
+          imgBuffer = Buffer.from(arrBuf);
+          const ctype = res.headers.get('content-type') || '';
+          if (ctype.includes('webp')) ext = 'webp';
+          else if (ctype.includes('png')) ext = 'png';
+          else if (ctype.includes('gif')) ext = 'gif';
+          else if (ctype.includes('jpeg') || ctype.includes('jpg')) ext = 'jpg';
+        }
+      } catch (e: any) {
+        console.warn(`[createAnuncioImagensZip] Falha ao baixar foto #${i + 1}: ${e.message}`);
+      }
+    }
+
+    if (imgBuffer) {
+      const safeId = (img.ml_image_id || `foto_${i + 1}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const prefix = i === 0 ? '01_capa' : `${String(i + 1).padStart(2, '0')}_foto`;
+      const filename = `${prefix}_${safeId}.${ext}`;
+      zip.file(filename, imgBuffer);
+    }
+  }
+
+  return await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}

@@ -244,12 +244,21 @@ export const Exportacoes: React.FC<ExportacoesProps> = ({ onSelectAnuncio }) => 
                     </span>
                     <span>Estoque: {item.quantidade}</span>
                     <a
+                      href={`/api/anuncios/${item.id}/exportar-imagens-zip`}
+                      download
+                      onClick={(e) => e.stopPropagation()}
+                      className="px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 hover:bg-amber-200 font-bold text-[10px]"
+                      title="Baixar apenas fotos do anúncio em alta resolução"
+                    >
+                      Fotos (ZIP)
+                    </a>
+                    <a
                       href={`/api/anuncios/${item.id}/exportar/zip`}
                       download
                       onClick={(e) => e.stopPropagation()}
                       className="text-amber-600 dark:text-amber-400 hover:underline font-bold"
                     >
-                      ZIP
+                      ZIP Completo
                     </a>
                   </div>
                 </div>

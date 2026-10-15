@@ -20,6 +20,10 @@ import {
   Calendar,
   CheckCircle2,
   Info,
+  HardDrive,
+  FolderDown,
+  CheckCheck,
+  Loader2,
 } from 'lucide-react';
 import { AnuncioCompleto, AtributoItem, VariacaoItem } from '../types/index.ts';
 import {
@@ -28,6 +32,10 @@ import {
   syncAnuncioWithML,
   duplicateAnuncio,
   getExportUrl,
+  getImagensZipUrl,
+  downloadAllAnuncioImages,
+  addAnuncioImage,
+  deleteAnuncioImage,
 } from '../services/api.ts';
 import { useToast } from '../context/ToastContext.tsx';
 import { Modal } from '../components/Modal.tsx';
@@ -74,6 +82,12 @@ export const DetalhesAnuncio: React.FC<DetalhesAnuncioProps> = ({
 
   // Export dropdown
   const [exportOpen, setExportOpen] = useState(false);
+
+  // Image management and downloading
+  const [downloadingDisk, setDownloadingDisk] = useState(false);
+  const [addImageModal, setAddImageModal] = useState(false);
+  const [newImageUrl, setNewImageUrl] = useState('');
+  const [addingImage, setAddingImage] = useState(false);
 
   const { addToast } = useToast();
 
@@ -180,6 +194,53 @@ export const DetalhesAnuncio: React.FC<DetalhesAnuncioProps> = ({
       onDuplicateSuccess(res.newId);
     } catch (err: any) {
       addToast('erro', 'Erro ao duplicar anúncio', err.message);
+    }
+  };
+
+  // Baixar todas as fotos para o disco local (/dados/anuncios/{mlbId}/imagens/)
+  const handleDownloadAllToDisk = async (force = false) => {
+    setDownloadingDisk(true);
+    try {
+      const res = await downloadAllAnuncioImages(anuncioId, force);
+      addToast('sucesso', 'Imagens baixadas com sucesso!', res.message);
+      const updated = await fetchAnuncioById(anuncioId);
+      setAnuncio(updated);
+    } catch (err: any) {
+      addToast('erro', 'Falha ao baixar imagens', err.message);
+    } finally {
+      setDownloadingDisk(false);
+    }
+  };
+
+  // Adicionar imagem avulsa via URL
+  const handleAddImage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newImageUrl.trim()) return;
+    setAddingImage(true);
+    try {
+      await addAnuncioImage(anuncioId, newImageUrl.trim());
+      addToast('sucesso', 'Imagem adicionada e salva com sucesso!');
+      setNewImageUrl('');
+      setAddImageModal(false);
+      const updated = await fetchAnuncioById(anuncioId);
+      setAnuncio(updated);
+    } catch (err: any) {
+      addToast('erro', 'Erro ao adicionar imagem', err.message);
+    } finally {
+      setAddingImage(false);
+    }
+  };
+
+  // Excluir imagem
+  const handleDeleteImage = async (imageId: number) => {
+    if (!window.confirm('Deseja excluir esta imagem do anúncio?')) return;
+    try {
+      await deleteAnuncioImage(anuncioId, imageId);
+      addToast('sucesso', 'Imagem removida com sucesso!');
+      const updated = await fetchAnuncioById(anuncioId);
+      setAnuncio(updated);
+    } catch (err: any) {
+      addToast('erro', 'Erro ao remover imagem', err.message);
     }
   };
 
@@ -665,40 +726,97 @@ export const DetalhesAnuncio: React.FC<DetalhesAnuncioProps> = ({
         {/* 3. IMAGENS */}
         {activeTab === 'imagens' && (
           <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Galeria de Imagens ({anuncio.imagens?.length || 0})
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Armazenadas na pasta local <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">/dados/anuncios/{anuncio.mlb_id}/imagens/</code>
+            {/* Top Bar with actions */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4 text-amber-500" />
+                    <span>Galeria de Imagens ({anuncio.imagens?.length || 0})</span>
+                  </h3>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                    (anuncio.imagens || []).filter(i => Boolean(i.local_path)).length === (anuncio.imagens?.length || 0) && (anuncio.imagens?.length || 0) > 0
+                      ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                      : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                  }`}>
+                    {(anuncio.imagens || []).filter(i => Boolean(i.local_path)).length} de {anuncio.imagens?.length || 0} salvas no disco
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap">
+                  <span>Pasta local:</span>
+                  <code className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-amber-600 dark:text-amber-400">
+                    /dados/anuncios/{anuncio.mlb_id}/imagens/
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(`/dados/anuncios/${anuncio.mlb_id}/imagens/`, 'dir_path', 'Caminho da pasta')}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-[10px] underline ml-1 cursor-pointer"
+                  >
+                    Copiar caminho
+                  </button>
                 </p>
               </div>
 
-              <a
-                href={getExportUrl(anuncioId, 'zip')}
-                download
-                className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs flex items-center gap-2 shadow-sm transition-colors shrink-0"
-              >
-                <Download className="w-4 h-4" />
-                <span>BAIXAR TODAS AS IMAGENS</span>
-              </a>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadAllToDisk(false)}
+                  disabled={downloadingDisk}
+                  className="px-3.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                  title="Baixa fisicamente todas as imagens para a pasta /dados/anuncios/[MLB]/imagens/"
+                >
+                  {downloadingDisk ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-500" />
+                  ) : (
+                    <HardDrive className="w-3.5 h-3.5 text-amber-500" />
+                  )}
+                  <span>{downloadingDisk ? 'BAIXANDO PARA O DISCO...' : 'SALVAR TODAS NO DISCO'}</span>
+                </button>
+
+                <a
+                  href={getImagensZipUrl(anuncioId)}
+                  download={`imagens_${anuncio.mlb_id}.zip`}
+                  className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs flex items-center gap-2 shadow-sm transition-transform active:scale-95 shrink-0"
+                  title="Gera e baixa um arquivo ZIP contendo estritamente todas as imagens em alta resolução"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>BAIXAR TODAS AS IMAGENS (ZIP)</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setAddImageModal(true)}
+                  className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>ADICIONAR FOTO</span>
+                </button>
+              </div>
             </div>
 
             {(!anuncio.imagens || anuncio.imagens.length === 0) ? (
-              <div className="p-8 text-center text-xs text-slate-400 border border-dashed rounded-xl">
-                Nenhuma imagem encontrada.
+              <div className="p-12 text-center text-xs text-slate-400 border border-dashed rounded-2xl space-y-3">
+                <ImageIcon className="w-8 h-8 text-slate-400 mx-auto opacity-50" />
+                <p className="font-semibold text-slate-500">Nenhuma imagem cadastrada para este anúncio.</p>
+                <button
+                  type="button"
+                  onClick={() => setAddImageModal(true)}
+                  className="px-4 py-2 rounded-xl bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer"
+                >
+                  Adicionar primeira imagem
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                 {anuncio.imagens.map((img, i) => (
                   <div
                     key={img.id}
-                    className="group relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col"
+                    className="group relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col"
                   >
+                    {/* Image viewport */}
                     <div
                       onClick={() => setPreviewImage(img.url)}
-                      className="aspect-square w-full bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden cursor-zoom-in"
+                      className="aspect-square w-full bg-slate-50 dark:bg-slate-800/40 flex items-center justify-center overflow-hidden cursor-zoom-in relative"
                     >
                       <img
                         src={img.url}
@@ -706,36 +824,89 @@ export const DetalhesAnuncio: React.FC<DetalhesAnuncioProps> = ({
                         className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
                       />
+
+                      {/* Floating tag for position */}
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-xs text-white text-[10px] font-bold">
+                        {i === 0 ? '★ Capa' : `#${i + 1}`}
+                      </span>
+
+                      {/* Floating tag for disk status */}
+                      <span
+                        className={`absolute top-2 right-2 px-2 py-0.5 rounded-lg text-[10px] font-bold backdrop-blur-xs flex items-center gap-1 ${
+                          img.local_path
+                            ? 'bg-emerald-600/90 text-white'
+                            : 'bg-amber-600/90 text-white'
+                        }`}
+                        title={img.local_path ? `Salva em: ${img.local_path}` : 'Ainda não baixada no disco'}
+                      >
+                        {img.local_path ? (
+                          <>
+                            <CheckCheck className="w-2.5 h-2.5" />
+                            <span>Disco</span>
+                          </>
+                        ) : (
+                          <span>Pendente</span>
+                        )}
+                      </span>
                     </div>
 
-                    <div className="p-2.5 space-y-1.5 flex-1 flex flex-col justify-between border-t border-slate-100 dark:border-slate-800 text-[11px]">
-                      <div className="flex items-center justify-between text-slate-400">
-                        <span className="font-bold">Foto #{i + 1}</span>
-                        {i === 0 && (
-                          <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold text-[10px]">
-                            Capa
-                          </span>
+                    {/* Metadata & Actions */}
+                    <div className="p-3 space-y-2 flex-1 flex flex-col justify-between border-t border-slate-100 dark:border-slate-800 text-[11px]">
+                      <div className="space-y-0.5">
+                        <p className="font-semibold text-slate-800 dark:text-slate-200 truncate" title={img.ml_image_id}>
+                          {img.ml_image_id || `Foto #${i + 1}`}
+                        </p>
+                        {img.local_path ? (
+                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono truncate" title={img.local_path}>
+                            {img.local_path.split('/').pop()}
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-amber-500 font-medium">Download local pendente</p>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-1 pt-1">
-                        <button
-                          onClick={() => copyToClipboard(img.url, `img_${i}`, `URL Foto ${i + 1}`)}
-                          className="flex-1 py-1 px-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-[10px] font-semibold text-center transition-colors truncate"
-                          title="Copiar URL Original"
-                        >
-                          Copiar URL
-                        </button>
-                        <a
-                          href={img.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          download={`mlb_${anuncio.mlb_id}_${i + 1}.jpg`}
-                          className="p-1 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-amber-400 hover:text-slate-950 transition-colors"
-                          title="Baixar imagem individual"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(img.url, `img_${i}`, `URL Foto ${i + 1}`)}
+                            className="flex-1 py-1 px-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[10px] font-semibold text-center transition-colors truncate text-slate-700 dark:text-slate-300 cursor-pointer"
+                            title="Copiar URL Original"
+                          >
+                            Copiar URL
+                          </button>
+
+                          <a
+                            href={img.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            download={`mlb_${anuncio.mlb_id}_${i + 1}.jpg`}
+                            className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-amber-400 hover:text-slate-950 text-slate-700 dark:text-slate-300 transition-colors"
+                            title="Baixar imagem individual no navegador"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteImage(img.id)}
+                            className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-rose-500 hover:text-white text-slate-400 transition-colors cursor-pointer"
+                            title="Excluir imagem"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {img.local_path && (
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(img.local_path || '', `loc_${i}`, 'Caminho local')}
+                            className="w-full py-0.5 text-[9px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-mono text-center truncate cursor-pointer"
+                            title={`Copiar: ${img.local_path}`}
+                          >
+                            Copiar caminho local
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1102,6 +1273,50 @@ export const DetalhesAnuncio: React.FC<DetalhesAnuncioProps> = ({
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* ADD IMAGE MODAL */}
+      <Modal
+        isOpen={addImageModal}
+        onClose={() => setAddImageModal(false)}
+        title="Adicionar Nova Imagem ao Anúncio"
+      >
+        <form onSubmit={handleAddImage} className="space-y-4 text-xs">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+              URL da Imagem
+            </label>
+            <input
+              type="url"
+              required
+              value={newImageUrl}
+              onChange={(e) => setNewImageUrl(e.target.value)}
+              placeholder="https://... (URL de imagem em alta resolução)"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs font-medium focus:ring-2 focus:ring-amber-500/50"
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              A imagem será baixada fisicamente para o disco em <code className="font-mono text-amber-600 dark:text-amber-400">/dados/anuncios/{anuncio.mlb_id}/imagens/</code>.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setAddImageModal(false)}
+              className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={addingImage || !newImageUrl.trim()}
+              className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+            >
+              {addingImage ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>{addingImage ? 'Baixando...' : 'Adicionar e Baixar Imagem'}</span>
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

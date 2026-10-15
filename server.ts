@@ -3,8 +3,8 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { getDb, createBackup, restoreBackup, listBackups, getConfig, setConfig, logAction, queryAll } from './database/db.ts';
-import { extractMlbId, importFromMercadoLivre } from './services/mercadolivre/mlService.ts';
+import { getDb, createBackup, restoreBackup, listBackups, getConfig, setConfig, logAction, queryAll, runExec, persistDb } from './database/db.ts';
+import { extractMlbId, importFromMercadoLivre, downloadImageToDisk } from './services/mercadolivre/mlService.ts';
 import { seedInitialDataIfEmpty } from './database/seed.ts';
 import {
   saveNewAnuncio,
@@ -21,6 +21,7 @@ import {
   generateAnuncioCsv,
   generateDescricaoTxt,
   createAnuncioZip,
+  createAnuncioImagensZip,
   createBatchZip,
   generateVariacoesCsv,
   generateAtributosCsv,
@@ -355,9 +356,152 @@ app.get('/api/anuncios/:id/exportar/:formato', async (req: Request, res: Respons
       return;
     }
 
+    if (formato === 'imagens-zip' || formato === 'imagens') {
+      const zipBuffer = await createAnuncioImagensZip(id);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="imagens_${safeTitle}.zip"`);
+      res.send(zipBuffer);
+      return;
+    }
+
     res.status(400).send('Formato de exportação não suportado.');
   } catch (error: any) {
     res.status(500).send(`Erro ao gerar exportação: ${error.message}`);
+  }
+});
+
+// 10.1 Exportação direta de pacote ZIP contendo apenas as imagens
+app.get('/api/anuncios/:id/exportar-imagens-zip', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const anuncio = await findById(id);
+    if (!anuncio) {
+      res.status(404).send('Anúncio não encontrado');
+      return;
+    }
+
+    const zipBuffer = await createAnuncioImagensZip(id);
+    const safeTitle = (anuncio.mlb_id || `anuncio_${id}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="imagens_${safeTitle}.zip"`);
+    res.send(zipBuffer);
+  } catch (error: any) {
+    res.status(500).send(`Erro ao exportar imagens em zip: ${error.message}`);
+  }
+});
+
+// 10.2 Baixar todas as imagens do anúncio para a pasta local no servidor (/dados/anuncios/{mlbId}/imagens/)
+app.post('/api/anuncios/:id/baixar-imagens', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const anuncio = await findById(id);
+    if (!anuncio) {
+      res.status(404).json({ error: 'Anúncio não encontrado' });
+      return;
+    }
+
+    const { force = false } = req.body || {};
+    const imagens = anuncio.imagens || [];
+    const results = [];
+
+    for (let i = 0; i < imagens.length; i++) {
+      const img = imagens[i];
+      // Verifica se já está baixada fisicamente no disco
+      if (!force && img.local_path) {
+        const fullLocalPath = path.resolve(process.cwd(), img.local_path.replace(/^\//, ''));
+        if (fs.existsSync(fullLocalPath) && fs.statSync(fullLocalPath).size > 100) {
+          results.push({ id: img.id, local_path: img.local_path, status: 'already_downloaded' });
+          continue;
+        }
+      }
+
+      const downloaded = await downloadImageToDisk(
+        anuncio.mlb_id,
+        img.url || img.url_original,
+        i,
+        img.ml_image_id || `img_${i + 1}`
+      );
+
+      if (downloaded) {
+        runExec('UPDATE imagens SET local_path = ? WHERE id = ?', [downloaded, img.id]);
+        results.push({ id: img.id, local_path: downloaded, status: 'downloaded' });
+      } else {
+        results.push({ id: img.id, local_path: null, status: 'failed' });
+      }
+    }
+
+    persistDb();
+    logAction('info', 'DOWNLOAD_IMAGENS', `Download em lote finalizado para anúncio #${id} (${anuncio.mlb_id}): ${results.filter(r => r.local_path).length}/${imagens.length} fotos salvas`);
+
+    const updated = await findById(id);
+    res.json({
+      success: true,
+      message: `${results.filter(r => r.local_path).length} de ${imagens.length} imagens salvas com sucesso em /dados/anuncios/${anuncio.mlb_id}/imagens/`,
+      folder: `/dados/anuncios/${anuncio.mlb_id}/imagens/`,
+      total: imagens.length,
+      downloaded: results.filter(r => r.local_path).length,
+      imagens: updated?.imagens || [],
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 10.3 Adicionar nova imagem e baixar automaticamente
+app.post('/api/anuncios/:id/imagens', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const anuncio = await findById(id);
+    if (!anuncio) {
+      res.status(404).json({ error: 'Anúncio não encontrado' });
+      return;
+    }
+
+    const { url } = req.body;
+    if (!url || typeof url !== 'string') {
+      res.status(400).json({ error: 'URL da imagem é obrigatória' });
+      return;
+    }
+
+    const imagens = anuncio.imagens || [];
+    const ordem = imagens.length;
+    const imgId = `${anuncio.mlb_id}_extra_${Date.now()}`;
+    const localPath = await downloadImageToDisk(anuncio.mlb_id, url.trim(), ordem, imgId);
+
+    runExec(
+      `INSERT INTO imagens (anuncio_id, ml_image_id, url, url_original, ordem, local_path)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, imgId, url.trim(), url.trim(), ordem, localPath || null]
+    );
+
+    persistDb();
+    const updated = await findById(id);
+    res.json({ success: true, imagens: updated?.imagens || [] });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 10.4 Excluir imagem
+app.delete('/api/anuncios/:id/imagens/:imageId', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const imageId = Number(req.params.imageId);
+
+    const img = queryAll<{ local_path: string | null }>('SELECT local_path FROM imagens WHERE id = ? AND anuncio_id = ?', [imageId, id])[0];
+    if (img && img.local_path) {
+      const fullPath = path.resolve(process.cwd(), img.local_path.replace(/^\//, ''));
+      if (fs.existsSync(fullPath)) {
+        try { fs.unlinkSync(fullPath); } catch (e) {}
+      }
+    }
+
+    runExec('DELETE FROM imagens WHERE id = ? AND anuncio_id = ?', [imageId, id]);
+    persistDb();
+    const updated = await findById(id);
+    res.json({ success: true, imagens: updated?.imagens || [] });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -530,10 +674,37 @@ async function startServer() {
   console.log('Banco de dados SQLite inicializado com sucesso.');
   await seedInitialDataIfEmpty();
 
+  // Baixa fotos pendentes em background para garantir que todos os anúncios tenham arquivos em disco
+  (async () => {
+    try {
+      const pendingImages = queryAll<{ id: number; anuncio_id: number; url: string; mlb_id: string; ordem: number; ml_image_id: string }>(`
+        SELECT i.id, i.anuncio_id, i.url, i.ordem, i.ml_image_id, a.mlb_id
+        FROM imagens i
+        JOIN anuncios a ON a.id = i.anuncio_id
+        WHERE i.local_path IS NULL OR i.local_path = ''
+        LIMIT 30
+      `);
+      if (pendingImages && pendingImages.length > 0) {
+        console.log(`Baixando ${pendingImages.length} imagens pendentes para disco local...`);
+        for (const p of pendingImages) {
+          const lp = await downloadImageToDisk(p.mlb_id, p.url, p.ordem, p.ml_image_id);
+          if (lp) {
+            runExec('UPDATE imagens SET local_path = ? WHERE id = ?', [lp, p.id]);
+          }
+        }
+        persistDb();
+        console.log('Imagens pendentes baixadas com sucesso.');
+      }
+    } catch (e) {}
+  })();
+
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

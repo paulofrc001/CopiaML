@@ -16,6 +16,7 @@ import {
   CheckSquare,
   Square,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import { AnuncioSummary } from '../types/index.ts';
 import {
@@ -539,9 +540,17 @@ export const MeusAnuncios: React.FC<MeusAnunciosProps> = ({
                             <Copy className="w-4 h-4" />
                           </button>
                           <a
+                            href={`/api/anuncios/${item.id}/exportar-imagens-zip`}
+                            download
+                            title="Baixar Pacote de Imagens (.zip)"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                          <a
                             href={`/api/anuncios/${item.id}/exportar/zip`}
                             download
-                            title="Exportar ZIP com Imagens"
+                            title="Exportar Pacote Completo (ZIP)"
                             className="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors"
                           >
                             <FileDown className="w-4 h-4" />

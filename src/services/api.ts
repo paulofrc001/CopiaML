@@ -186,6 +186,44 @@ export async function fetchLogs(): Promise<{ logs: LogItem[] }> {
   return res.json();
 }
 
-export function getExportUrl(id: number, format: 'json' | 'csv' | 'txt' | 'zip' | 'variacoes-csv' | 'atributos-csv'): string {
+export function getExportUrl(id: number, format: 'json' | 'csv' | 'txt' | 'zip' | 'variacoes-csv' | 'atributos-csv' | 'imagens-zip'): string {
   return `${API_BASE}/anuncios/${id}/exportar/${format}`;
+}
+
+export function getImagensZipUrl(id: number): string {
+  return `${API_BASE}/anuncios/${id}/exportar-imagens-zip`;
+}
+
+export async function downloadAllAnuncioImages(
+  id: number,
+  force = false
+): Promise<{ success: boolean; message: string; folder: string; total: number; downloaded: number; imagens: any[] }> {
+  const res = await fetch(`${API_BASE}/anuncios/${id}/baixar-imagens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Falha ao baixar imagens do anúncio');
+  return data;
+}
+
+export async function addAnuncioImage(id: number, url: string): Promise<{ success: boolean; imagens: any[] }> {
+  const res = await fetch(`${API_BASE}/anuncios/${id}/imagens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Falha ao adicionar imagem');
+  return data;
+}
+
+export async function deleteAnuncioImage(id: number, imageId: number): Promise<{ success: boolean; imagens: any[] }> {
+  const res = await fetch(`${API_BASE}/anuncios/${id}/imagens/${imageId}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Falha ao excluir imagem');
+  return data;
 }
