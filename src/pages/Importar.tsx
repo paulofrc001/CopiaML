@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   ChevronDown,
   ChevronUp,
+  Sparkles,
 } from 'lucide-react';
 import { checkMlbExists, importListing, importBatch } from '../services/api.ts';
 import { useToast } from '../context/ToastContext.tsx';

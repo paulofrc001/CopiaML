@@ -119,26 +119,44 @@ export function extractMlbId(input: string): string | null {
 export function extractTitleFromUrl(url: string): string | null {
   if (!url || !url.includes('mercadolivre.com')) return null;
 
-  // Caso A: /slug-do-produto/up/MLBU... ou /slug-do-produto/p/MLB...
-  const upMatch = url.match(/mercadolivre\.com\.[a-z]+\/([^\/]+)\/(?:up\/|p\/)/i);
-  if (upMatch && upMatch[1]) {
-    return upMatch[1]
-      .split('-')
-      .filter(Boolean)
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-      .join(' ');
-  }
+  // Extrai apenas a URL do Mercado Livre caso haja múltiplas linhas ou texto ao redor
+  const mlUrlMatch = url.match(/https?:\/\/(?:[a-z0-9-]+\.)?mercadolivre\.com\.[a-z]+[^\s"'<>]+/i);
+  const cleanUrl = mlUrlMatch ? mlUrlMatch[0] : url.split(/[\r\n\s]+/)[0];
 
-  // Caso B: /MLB-12345678-slug ou /MLB12345678-slug
-  const standardMatch = url.match(/mercadolivre\.com\.[a-z]+\/([^\/\?#]+)/i);
-  if (standardMatch && standardMatch[1]) {
-    const rawSlug = standardMatch[1].replace(/^[A-Z]{3,4}[-_]?[0-9]+-?/i, '');
-    if (rawSlug && rawSlug.length > 2) {
-      return rawSlug
+  // Caso A: /slug-do-produto/up/MLBU... ou /slug-do-produto/p/MLB...
+  const upMatch = cleanUrl.match(/mercadolivre\.com\.[a-z]+\/([^\/]+)\/(?:up\/|p\/)/i);
+  if (upMatch && upMatch[1]) {
+    const slug = upMatch[1];
+    if (slug.length > 2 && !slug.toLowerCase().startsWith('mlb') && !slug.toLowerCase().startsWith('mlbu')) {
+      return slug
         .split('-')
         .filter(Boolean)
         .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
         .join(' ');
+    }
+  }
+
+  // Caso B: /MLB-12345678-slug ou /MLB12345678-slug
+  const standardMatch = cleanUrl.match(/mercadolivre\.com\.[a-z]+\/([^\/\?#]+)/i);
+  if (standardMatch && standardMatch[1]) {
+    const rawSlug = standardMatch[1]
+      .replace(/^[A-Z]{3,4}[-_]?[0-9]+-?/i, '')
+      .replace(/-_JM$/i, '');
+    if (
+      rawSlug &&
+      rawSlug.length > 2 &&
+      !rawSlug.includes(':') &&
+      !rawSlug.includes('/') &&
+      !rawSlug.toLowerCase().startsWith('http')
+    ) {
+      return rawSlug
+        .split('-')
+        .filter(Boolean)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ')
+        .replace(/\bAlgodo\b/gi, 'Algodão')
+        .replace(/\bBasica\b/gi, 'Básica')
+        .replace(/\bTenis\b/gi, 'Tênis');
     }
   }
 

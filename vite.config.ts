@@ -12,8 +12,13 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // Permite hosts do ngrok, túneis e rede local
-      allowedHosts: true as const,
+      // Permite hosts do ngrok (específico e curinga), túneis e rede local
+      allowedHosts: [
+        'frenzied-coastal-untaxed.ngrok-free.dev',
+        '.ngrok-free.dev',
+        '.ngrok.io',
+        '.ngrok-free.app',
+      ],
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

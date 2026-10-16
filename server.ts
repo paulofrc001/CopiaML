@@ -54,8 +54,9 @@ app.post('/api/anuncios/importar', async (req: Request, res: Response) => {
       return;
     }
 
-    // Extrai URLs de imagens se foram fornecidas pelo usuário
+    // Extrai URLs de imagens se foram fornecidas pelo usuário (inclusive no próprio campo de entrada)
     const textToScan = [
+      input,
       Array.isArray(images) ? images.join('\n') : images,
       imageUrls,
       rawHtml,
@@ -556,8 +557,8 @@ app.post('/api/anuncios/:id/imagens/definir-capa', async (req: Request, res: Res
       return;
     }
 
-    const imagens = anuncio.imagens || [];
-    const target = imagens.find(img => img.id === Number(imageId));
+    const imagens = (anuncio.imagens || []) as any[];
+    const target = imagens.find((img: any) => img.id === Number(imageId));
     if (!target) {
       res.status(404).json({ error: 'Imagem não encontrada no anúncio' });
       return;
